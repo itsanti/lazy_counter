@@ -1,0 +1,49 @@
+<?php
+/**
+ * @file
+ * Tests for Lazy Counter module.
+ */
+
+/**
+ * Test lazy_counter_add_points form.
+ */
+class LazyCounterTests extends BackdropWebTestCase {
+
+  /**
+   * Implements backdropWebTestCase::setUp().
+   */
+  public function setUp() {
+    parent::setUp('lazy_counter');
+    $this->privilegedUser = $this->backdropCreateUser(array('admin page visits'));
+    $this->backdropLogin($this->privilegedUser);
+  }
+
+  /**
+   * Go to form and test success  and error submit results for it.
+   */
+  public function testAddPoints() {
+    // Test success submission.
+    $fields = array(
+      'lazy_counter_user_name' => $this->loggedInUser->name,
+      'lazy_counter_points' => 20,
+    );
+    $this->verbose('Form fields: ' . var_export($fields, TRUE));
+    $this->backdropPost('admin/config/people/lazy_counter/manual', $fields, t('Add points'));
+    $this->assertResponse(200, 'User is allowed to add points.');
+    $this->assertText(t('!num points successfully added to !user user.', array(
+      '!num' => $fields['lazy_counter_points'],
+      '!user' => $fields['lazy_counter_user_name'],
+    )), "Found success message in add points form");
+
+    // Test error submission.
+    $fields['lazy_counter_user_name'] = 'dummy_user';
+    $this->verbose('Form fields: ' . var_export($fields, TRUE));
+    $this->backdropPost('admin/config/people/lazy_counter/manual', $fields, t('Add points'));
+    $this->assertText(t('User not found.'), "Found error message in add points form");
+
+    // Test user name autoload.
+    $this->backdropGet('admin/config/people/lazy_counter/manual/' . $this->loggedInUser->uid);
+    $this->assertRaw($this->loggedInUser->name, "Success autoload user name.");
+  }
+
+}

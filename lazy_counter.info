@@ -1,0 +1,6 @@
+name = Lazy Counter Backdrop port
+description = Count visits of pages by user with 'count page visits' permission.
+backdrop = 1.x
+version = BACKDROP_VERSION
+package = Custom
+configure = admin/config/people/lazy_counter/cron

@@ -1,0 +1,60 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the Lazy Counter module.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function lazy_counter_schema() {
+  $schema['lazycounter'] = array(
+    'description' => 'The table for Lazy Counter data.',
+    'fields' => array(
+      'uid' => array(
+        'description' => 'The primary identifier for a user.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'points' => array(
+        'description' => 'The current number of points.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => 0,
+        'size' => 'medium',
+      ),
+      'reset_date' => array(
+        'description' => 'The Unix timestamp when the counter resets.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array('points_index' => array('points')),
+    'primary key' => array('uid'),
+  );
+  return $schema;
+}
+
+/**
+ * Move Lazy Counter settings from variables to config.
+ */
+function lazy_counter_update_1000() {
+  $config = config('lazy_counter.settings');
+  $config->set('lazy_counter_reset_interval', update_variable_get('lazy_counter_reset_interval', '1'));
+  $config->set('lazy_counter_get_prize', update_variable_get('lazy_counter_get_prize', 1000));
+  $config->save();
+
+  update_variable_del('lazy_counter_reset_interval');
+  update_variable_del('lazy_counter_get_prize');
+}
+
+/**
+ * Implements hook_update_last_removed().
+ */
+function lazy_counter_update_last_removed() {
+  return 7300;
+}

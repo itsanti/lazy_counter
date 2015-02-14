@@ -1,0 +1,5 @@
+[LazyCounterTests]
+name = Add points form test
+description = Test lazy_counter_add_points form.
+group = Lazy Counter
+file = lazy_counter.test

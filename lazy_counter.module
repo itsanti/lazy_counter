@@ -1,0 +1,494 @@
+<?php
+/**
+ * @file
+ * The main file for Lazy Counter module.
+ */
+
+/**
+ * Implements hook_config_info().
+ */
+function lazy_counter_config_info() {
+  $prefixes['lazy_counter.settings'] = array(
+    'label' => t('Lazy Counter settings'),
+    'group' => t('Configuration'),
+  );
+  return $prefixes;
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function lazy_counter_block_info() {
+  $blocks['user_points'] = array(
+    'info'   => t('Current user points'),
+    'region' => 'sidebar_first',
+    'cache'  => BACKDROP_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function lazy_counter_block_view($delta = '') {
+  $block = array();
+
+  if ($delta == 'user_points') {
+    $block['subject'] = t('Your current points');
+    $block['content'] = lazy_counter_block_user_points_content();
+  }
+
+  return $block;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function lazy_counter_menu() {
+  $items = array();
+
+  $items['admin/config/people/lazy_counter'] = array(
+    'title' => 'Lazy Counter',
+    'description' => 'Configuring Lazy Counter users.',
+    'page callback' => 'lazy_counter_list_page',
+    'access arguments' => array('admin page visits'),
+  );
+
+  $items['admin/config/people/lazy_counter/autocomplete'] = array(
+    'title' => 'Lazy Counter user names list.',
+    'description' => 'Fetch usernames for autocomplete feature.',
+    'page callback' => 'lazy_counter_user_name_autocomplete',
+    'access arguments' => array('admin page visits'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/config/people/lazy_counter/list'] = array(
+    'title' => 'List',
+    'description' => 'List Lazy Counter users.',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => 0,
+  );
+
+  $items['admin/config/people/lazy_counter/cron'] = array(
+    'title' => 'Cron setup',
+    'description' => 'Lazy Counter users cron setup.',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('lazy_counter_cron_setup'),
+    'access arguments' => array('admin page visits'),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 10,
+  );
+
+  $items['admin/config/people/lazy_counter/manual'] = array(
+    'title' => 'Apply Points by User name',
+    'description' => 'Increase Lazy Counter points.',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('lazy_counter_add_points', 5),
+    'access arguments' => array('admin page visits'),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 20,
+  );
+
+  return $items;
+}
+
+/**
+ * Generate content for user_points block.
+ */
+function lazy_counter_block_user_points_content() {
+  global $user;
+  $output = '';
+  if (user_access('count page visits', $user)) {
+    $output .= t('<strong>Hello !user!</strong><br>', array('!user' => $user->name));
+    $output .= t('You have !num points now.', array(
+      '!num' => _lazy_counter_get($user->uid),
+    ));
+  }
+  return $output;
+}
+
+
+/**
+ * Callback function for user names autocomplete.
+ *
+ * @param string $value
+ *   Current form field value.
+ */
+function lazy_counter_user_name_autocomplete($value) {
+
+  $results = db_select('users', 'u')
+    ->fields('u', array('name'))
+    ->condition('name', '%' . db_like($value) . '%', 'LIKE')
+    ->range(0, 10)
+    ->execute();
+
+  $names = array();
+  while ($user = $results->fetchAssoc()) {
+    $names[$user['name']] = $user['name'];
+  }
+
+  backdrop_json_output($names);
+}
+
+/**
+ * Show Lazy Counter page.
+ *
+ * @return string
+ *   Content of lazy counter page.
+ */
+function lazy_counter_list_page() {
+  $output = '';
+
+  $headers = array(
+    array('data' => t('User name')),
+    array('data' => t('Counter number'), 'sort' => 'desc', 'field' => 'points'),
+  );
+
+  $query = db_select('lazycounter', 'lc');
+  $query->fields('lc', array('uid', 'points'));
+  $query->fields('u', array('name'));
+  $query->join('users', 'u', 'lc.uid = u.uid');
+  $query->condition('lc.points', 0, '>');
+  $query->extend('TableSort')
+    ->orderByHeader($headers);
+  $result = $query->execute()->fetchAllAssoc('uid');
+
+  $rows = array();
+  foreach ($result as $row) {
+    $rows[] = array(
+      array('data' => l($row->name, 'admin/config/people/lazy_counter/manual/' . $row->uid)),
+      array('data' => $row->points),
+    );
+  }
+
+  $output = theme('table', array('header' => $headers, 'rows' => $rows));
+
+  return $output;
+}
+
+/**
+ * Form constructor for the lazy counter settings form.
+ */
+function lazy_counter_cron_setup() {
+
+  $options = array(
+    '1' => t('1 month'),
+    '3' => t('3 month'),
+    '6' => t('6 month'),
+    '12' => t('12 month'),
+  );
+
+  $form['lazy_counter_reset_interval'] = array(
+    '#type' => 'select',
+    '#title' => t('Lazy Counter reset interval.'),
+    '#default_value' => config_get('lazy_counter.settings', 'lazy_counter_reset_interval'),
+    '#options' => $options,
+    '#description' => t('Set reset interval for user loyalty points.'),
+    '#required' => TRUE,
+    '#ajax' => array(
+      'callback' => 'lazy_counter_cron_setup_callback',
+      'wrapper' => 'cron-setup-wrapper',
+    ),
+  );
+
+  $form['lazy_counter_get_prize'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Lazy Counter prize points amount.'),
+    '#default_value' => config_get('lazy_counter.settings', 'lazy_counter_get_prize'),
+    '#description' => t('Set points for getting prize.'),
+    '#required' => TRUE,
+    '#size' => 5,
+    '#maxlength' => 5,
+    '#ajax' => array(
+      'callback' => 'lazy_counter_cron_setup_callback',
+      'wrapper' => 'cron-setup-wrapper',
+    ),
+  );
+
+  $form['#prefix'] = '<div id="cron-setup-wrapper">';
+  $form['#suffix'] = '</div>';
+
+  return $form;
+}
+
+
+/**
+ * Handle ajax requests for cron setup form.
+ */
+function lazy_counter_cron_setup_callback($form, &$form_state) {
+  lazy_counter_cron_setup_validate($form, $form_state);
+  if (form_get_errors()) {
+    return $form;
+  }
+  else {
+    config_set('lazy_counter.settings', 'lazy_counter_reset_interval', $form_state['values']['lazy_counter_reset_interval']);
+    config_set('lazy_counter.settings', 'lazy_counter_get_prize', $form_state['values']['lazy_counter_get_prize']);
+  }
+  lazy_counter_cron_setup_submit($form, $form_state);
+  return $form;
+}
+
+/**
+ * Form constructor for the lazy counter increase points.
+ *
+ * @param null|int $uid
+ *   Standard backdrop user uid.
+ */
+function lazy_counter_add_points($form, &$form_state, $uid = NULL) {
+
+  $name = '';
+
+  if (!is_null($uid)) {
+    $user = user_load($uid);
+    $name = $user->name;
+  }
+
+  $options = array(
+    '10' => t('10'),
+    '20' => t('20'),
+    '50' => t('50'),
+  );
+
+  $form['lazy_counter_user_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('User name for adding points.'),
+    '#default_value' => $name,
+    '#description' => t('Input site user name.'),
+    '#required' => TRUE,
+    '#size' => 15,
+    '#maxlength' => 15,
+    '#autocomplete_path' => 'admin/config/people/lazy_counter/autocomplete',
+  );
+
+  $form['lazy_counter_points'] = array(
+    '#type' => 'radios',
+    '#title' => t('Lazy Counter prize points amount.'),
+    '#description' => t('Set points for getting prize.'),
+    '#required' => TRUE,
+    '#options' => $options,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add points'),
+  );
+
+  return $form;
+
+}
+
+/**
+ * Implements hook_validate().
+ */
+function lazy_counter_cron_setup_validate($form, &$form_state) {
+  $values = $form_state['values'];
+  $points = $values['lazy_counter_get_prize'];
+  if (!is_numeric($points) || $points <= 0 || $points >= 99999) {
+    form_set_error('lazy_counter_get_prize', t('Points must bee from 1 to 99999.'));
+  }
+}
+
+/**
+ * Implements hook_submit().
+ */
+function lazy_counter_cron_setup_submit($form, &$form_state) {
+
+  backdrop_set_message(t('Cron settings successfully saved.'));
+
+  watchdog('lazy_counter', 'Cron settings changed. Interval: @int month. Points: @points.', array(
+    '@int' => $form_state['values']['lazy_counter_reset_interval'],
+    '@points' => $form_state['values']['lazy_counter_get_prize'],
+  ), WATCHDOG_INFO);
+
+}
+/**
+ * Implements hook_validate().
+ */
+function lazy_counter_add_points_validate($form, &$form_state) {
+  $values = $form_state['values'];
+  if (!user_load_by_name($values['lazy_counter_user_name'])) {
+    form_set_error('lazy_counter_user_name', t('User not found.'));
+  }
+}
+
+/**
+ * Implements hook_submit().
+ */
+function lazy_counter_add_points_submit($form, &$form_state) {
+  $values = $form_state['values'];
+  $user = user_load_by_name($values['lazy_counter_user_name']);
+
+  _lazy_counter_set($user->uid, _lazy_counter_get($user->uid) + $values['lazy_counter_points']);
+  $form_state['redirect'] = 'admin/config/people/lazy_counter';
+
+  backdrop_set_message(t('!num points successfully added to !user user.', array(
+    '!num' => $values['lazy_counter_points'],
+    '!user' => $values['lazy_counter_user_name'],
+  )));
+
+  watchdog('lazy_counter', '!num points successfully added to !user user.', array(
+    '!num' => $values['lazy_counter_points'],
+    '!user' => $values['lazy_counter_user_name'],
+  ), WATCHDOG_INFO);
+}
+
+/**
+ * Implements hook_exit().
+ */
+function lazy_counter_exit() {
+  _lazy_counter_change();
+}
+
+/**
+ * Implements hook_permission().
+ */
+function lazy_counter_permission() {
+  return array(
+    'count page visits' => array(
+      'title' => t('Count page visits.'),
+      'description' => t('User can count page visits.'),
+    ),
+    'admin page visits' => array(
+      'title' => t('Configuring page visits.'),
+      'description' => t('User can configure page visits.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_user_login().
+ */
+function lazy_counter_user_login(&$edit, $account) {
+  if (user_access('count page visits', $account)) {
+    $args = array(
+      '!username' => $account->name,
+      '!number' => _lazy_counter_get($account->uid),
+    );
+    backdrop_set_message(t('Hello, !username! Your lazy counter is !number.', $args));
+  }
+}
+
+/**
+ * Implements hook_cron().
+ */
+function lazy_counter_cron() {
+  $lazy_counter_reset_interval = config_get('lazy_counter.settings', 'lazy_counter_reset_interval');
+  $reset_interval_string = '+' . $lazy_counter_reset_interval . ' month';
+  $prize_points = config_get('lazy_counter.settings', 'lazy_counter_get_prize');
+
+  $uids = array();
+  $now = time();
+
+  $records = db_select('lazycounter', 'lc')
+    ->fields('lc')
+    ->execute()
+    ->fetchAllAssoc('uid');
+
+  foreach ($records as $uid => $row) {
+    $time_stamp_condition = strtotime($reset_interval_string, $row->reset_date) <= $now;
+    if ($time_stamp_condition && $row->points >= $prize_points) {
+      $user = user_load($uid);
+      $to = $user->mail;
+      $params = array(
+        'username' => $user->name,
+      );
+      backdrop_mail('lazy_counter', 'reset_points_mail', $to, LANGUAGE_NONE, $params);
+    }
+    if ($time_stamp_condition) {
+      $uids[] = $uid;
+    }
+  }
+
+  if (!empty($uids)) {
+    $query = db_update('lazycounter');
+    $query->fields(array(
+      'reset_date' => $now,
+      'points' => 0,
+    ));
+    $query->condition('uid', $uids, 'in');
+    $query->execute();
+  }
+}
+
+/**
+ * Implements hook_mail().
+ */
+function lazy_counter_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'reset_points_mail':
+      $message['subject'] = t('You got a prize!');
+      $message['body'][] = t('Hello @username!', array('@username' => $params['username']));
+      $message['body'][] = t('You got a prize! Contact with site admin for instructions.');
+      break;
+  }
+}
+
+/**
+ * Helper function for changing 'lazy_counter_nums' variable.
+ */
+function _lazy_counter_change() {
+  global $user;
+  $uid = $user->uid;
+
+  if (user_access('count page visits', $user)) {
+    $counter = _lazy_counter_get($uid);
+    $counter += 1;
+    _lazy_counter_set($uid, $counter);
+  }
+}
+
+/**
+ * Helper function for getting value of 'lazy_counter_nums' variable by uid.
+ *
+ * @param int $uid
+ *   Current user ID.
+ *
+ * @return int
+ *   Current counter value for this user.
+ */
+function _lazy_counter_get($uid) {
+  $num = 0;
+
+  $query = db_select('lazycounter', 'lc');
+  $query->fields('lc', array('points'));
+  $query->condition('uid', $uid);
+  $result = $query->execute();
+  $result = $result->fetchCol();
+
+  if (!empty($result)) {
+    $num = $result[0];
+  }
+
+  return $num;
+}
+
+/**
+ * Helper function for setting value of 'lazy_counter_nums' variable by uid.
+ *
+ * @param int $uid
+ *   Current user ID.
+ * @param int $val
+ *   Current counter value.
+ */
+function _lazy_counter_set($uid, $val) {
+
+  $result = db_select('lazycounter', 'lc')
+    ->fields('lc')
+    ->condition('uid', $uid)
+    ->range(0, 1)
+    ->execute()
+    ->fetchAssoc();
+
+  $record = array(
+    'uid' => $uid,
+    'points' => $val,
+  );
+
+  if (!$result) {
+    $record['reset_date'] = time();
+    backdrop_write_record('lazycounter', $record);
+  }
+  if ($result && $val > 0) {
+    backdrop_write_record('lazycounter', $record, 'uid');
+  }
+}
